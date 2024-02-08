@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+option go_package = "github.com/morfien101/dynamo-q/comms";
+package comms;
+
+service LockService {
+  // Checks if the lock is currently held
+  rpc IsLockHeld(LockRequest) returns (LockResponse);
+
+  // Waits for a signal that the lock is obtained
+  rpc SubscribeLockStatus(LockRequest) returns (stream LockResponse);
+
+  // Tells the lock handler to shut down
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+message LockRequest {}
+
+message LockResponse {
+  bool isHeld = 1;
+}
+
+message ShutdownRequest {}
+
+message ShutdownResponse {}

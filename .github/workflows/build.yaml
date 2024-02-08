@@ -1,0 +1,3 @@
+# Place holder
+# Create an action that calls the client or server base on a input flag
+# The action should download a release bin and chmod then execute with inputs

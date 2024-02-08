@@ -1,0 +1,4 @@
+# Place holder
+# This workflow should create a release when tagged
+# The release should create (server, client) * (window, mac[x86,arm], linux[x86,arm]) bins, one for each release to use.
+# It should also publish an action release to the marketplace
