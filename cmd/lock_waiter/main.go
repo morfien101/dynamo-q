@@ -15,11 +15,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// TODO
-// One one time is lock available.
-// Wait for lock, this is likely the most common use case.
-// Send a shutdown signal to the lock manager.
-// flags: host, port, log-level
+var (
+	version = "development"
+)
 
 func helpMessage() {
 	fmt.Println("Usage: lock_waiter [flags]")
@@ -36,12 +34,17 @@ func helpMessage() {
 	fmt.Println("        Action: Wait for the lock to be available.")
 	fmt.Println("  -try-once")
 	fmt.Println("        Action: Only try to get the lock once.")
+	fmt.Println("  -v")
+	fmt.Println("        Shows the version.")
 	fmt.Println("  -h")
 	fmt.Println("        Show this help message.")
 	fmt.Println("")
 	fmt.Println("Acton flags: You can specify only one of the action flags per run.")
 	fmt.Println("             They are executed in the order of try-once, wait-for-lock, shutdown.")
+}
 
+func printVersion() {
+	fmt.Println(version)
 }
 
 func main() {
@@ -51,6 +54,7 @@ func main() {
 	waitForLock := flag.Bool("wait-for-lock", false, "Action: Wait for the lock to be available.")
 	shutdown := flag.Bool("shutdown", false, "Action: Send a shutdown signal to the lock manager.")
 	tryOnce := flag.Bool("try-once", false, "Action: Only try to get the lock once.")
+	showVersion := flag.Bool("v", false, "Shows the version.")
 	flag.Usage = helpMessage
 	flag.Parse()
 
@@ -60,6 +64,11 @@ func main() {
 		log.Fatalf("Invalid log level: %v", err)
 	}
 	log.SetLevel(level)
+
+	if *showVersion {
+		printVersion()
+		os.Exit(0)
+	}
 
 	if !*waitForLock && !*shutdown && !*tryOnce {
 		log.Error("You must specify one of the following action flags: wait-for-lock, shutdown, try-once")

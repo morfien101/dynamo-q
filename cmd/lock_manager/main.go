@@ -37,8 +37,9 @@ type status struct {
 }
 
 var (
-	state = status{}
-	ls    *LockServer
+	state   = status{}
+	ls      *LockServer
+	version = "development"
 )
 
 func helpMessage() {
@@ -61,6 +62,10 @@ func helpMessage() {
 	fmt.Println("")
 }
 
+func printVersion() {
+	fmt.Println(version)
+}
+
 func main() {
 
 	lockTableName := flag.String("lock-table", "", "The name of the DynamoDB table to use for Locks.")
@@ -70,6 +75,7 @@ func main() {
 	host := flag.String("host", "localhost", "The host to listen on.")
 	port := flag.Int("port", 50051, "The port to listen on.")
 	logLevel := flag.String("log-level", "info", "The log level to use. Options are: trace, debug, info, warn, error, fatal, panic")
+	showVersion := flag.Bool("v", false, "Shows the version.")
 	flag.Usage = helpMessage
 	flag.Parse()
 
@@ -80,6 +86,11 @@ func main() {
 		os.Exit(1)
 	}
 	log.SetLevel(level)
+
+	if *showVersion {
+		printVersion()
+		os.Exit(0)
+	}
 
 	if *clientName == "" {
 		*clientName = uuid.NewString()
