@@ -65,7 +65,7 @@ runs:
           -queue-name "${{ inputs.queue-name }}" \
           &
         elif [[ "${{ inputs.action }}" == "client-wait" ]]; then
-          $DYNAMOQ_WAITER -wait-for-lock
+          $DYNAMOQ_WAITER -wait-for-turn
         elif [[ "${{ inputs.action }}" == "server-stop" ]]; then
           $DYNAMOQ_WAITER -shutdown
           # We need to give the server time to shutdown.
