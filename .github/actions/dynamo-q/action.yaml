@@ -9,15 +9,15 @@ inputs:
     required: true
     default: client-wait
   lock-id:
-    description: 'The lock id to use for the client'
-    required: true
+    description: 'The lock id to use for the server. Required for start-server.'
+    required: false
     default: ''
   lock-table:
-    description: 'The lock table to use for the server'
+    description: 'The lock table to use for the server. Required for start-server.'
     required: false
     default: 'github-actions-dynamo-q-lock'
   queue-table:
-    description: 'The queue table to use for the server'
+    description: 'The queue table to use for the server. Required for start-server.'
     required: false
     default: 'github-actions-dynamo-q-queue'
   version:
