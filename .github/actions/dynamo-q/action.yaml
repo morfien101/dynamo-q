@@ -33,12 +33,12 @@ runs:
       shell: bash
       run: |
         for payload in "dynamoq_manager_linux_amd64" "dynamoq_waiter_linux_amd64"; do
-          output_name="${payload%%_linux_amd64}"
-          if [ ! -f /tmp/$output_name ]; then
+          output_name="/tmp/${payload%%_linux_amd64}"
+          if [ ! -f "$output_name" ]; then
             echo "Downloading $payload"
             download_url=$(curl -s https://api.github.com/repos/morfien101/dynamo-q/releases/latest | jq -r --arg name $payload '.assets[] | select(.name == $name) | .browser_download_url')
             curl -L -o $output_name $download_url
-            chmod 550 /tmp/$output_name
+            chmod 550 $output_name
           fi
           
           if [[ "$output_name" =~ "manager" ]]; then
