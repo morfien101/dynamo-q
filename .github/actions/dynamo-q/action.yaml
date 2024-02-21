@@ -1,4 +1,66 @@
-# Place holder
-# This workflow should create a release when tagged
-# The release should create (server, client) * (window, mac[x86,arm], linux[x86,arm]) bins, one for each release to use.
-# It should also publish an action release to the marketplace
+name: dynamo-q
+description: |
+  Github action that allows the running of dynamo-q server and client commands.
+  You should pass in as environment variables the auth details for the AWS account.
+
+inputs:
+  action:
+    description: 'The action to perform. Options: server-start, client-wait, server-stop'
+    required: true
+    default: client-wait
+  lock-id:
+    description: 'The lock id to use for the client'
+    required: true
+    default: ''
+  lock-table:
+    description: 'The lock table to use for the server'
+    required: false
+    default: 'github-actions-dynamo-q-lock'
+  queue-table:
+    description: 'The queue table to use for the server'
+    required: false
+    default: 'github-actions-dynamo-q-queue'
+  version:
+    description: 'The version of dynamo-q to use'
+    required: false
+    default: 'latest'
+
+
+runs:
+  using: composite
+  steps:
+    - name: download dynamo-q
+      shell: bash
+      run: |
+        for payload in "dynamoq_manager_linux_amd64" "dynamoq_waiter_linux_amd64"; do
+          output_name=${payload%%_linux_amd64}
+          if [ ! -f /tmp/$output_name ]; then
+            download_url=$(curl -s https://api.github.com/repos/morfien101/dynamo-q/releases/latest | jq -r --arg name $payload '.assets[] | select(.name == $name) | .browser_download_url')
+            curl -sSL -o $output_name $download_url
+            chmod 550 /tmp/$output_name
+          fi
+          
+          if [[ "$output_name" =~ "manager" ]]; then
+            echo "DYNAMOQ_SERVER=/tmp/$output_name" >> $GITHUB_ENV
+          elif [[ "$output_name" =~ "waiter" ]]; then
+            echo "DYNAMOQ_WAITER=/tmp/$output_name" >> $GITHUB_ENV
+          fi
+        done
+    
+    - name: run dynamo-q action
+      shell: bash
+      run: |
+        echo "Running dynamo-q action: ${{ inputs.action }}"
+        if [[ "${{ inputs.action }}" == "server-start" ]]; then
+          # Start the server and pass it to the background
+          $DYNAMOQ_SERVER \
+          -lock-table "${{ inputs.lock-table }}" \
+          -queue-table "${{ inputs.queue-table }}" \
+          -client "${{ github.repository }}-${{ github.run_number }}" \
+          -lock "${{ inputs.lock-id }}" \
+          &
+        elif [[ "${{ inputs.action }}" == "client-wait" ]]; then
+          $DYNAMOQ_WAITER -wait-for-lock
+        elif [[ "${{ inputs.action }}" == "server-stop" ]]; then
+          $DYNAMOQ_WAITER -shutdown
+        fi
