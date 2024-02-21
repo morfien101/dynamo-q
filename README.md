@@ -1,10 +1,11 @@
 # Dynamo-Q
-Queue and lock process for AWS DynamoDB.
+Queue process for AWS DynamoDB.
 
 Primarily intended to be used with Github actions to allow jobs to queue up.
 Be warned, queuing jobs consume usage minutes.
 
-Github actions only have a queue of running + 1 at most. The concurrency model will cancel any queued job that is trying to get a hold on a lock.
+Github actions only have a queue of running + 1 at most.
+The concurrency model will cancel any queued job that is trying to get a hold on a lock.
 This sucks when you want all the jobs to run.
 
 This action solves this.

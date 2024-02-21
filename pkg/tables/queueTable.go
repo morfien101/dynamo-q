@@ -10,12 +10,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func CreateQueueEntry(svc *dynamodb.DynamoDB, lockId, clientId string, entryTimestamp int64, tableName string, stopHeartBeat chan bool) error {
+func CreateQueueEntry(svc *dynamodb.DynamoDB, queueName, clientId string, entryTimestamp int64, tableName string, stopHeartBeat chan bool) error {
 	_, err := svc.PutItem(&dynamodb.PutItemInput{
 		TableName: aws.String(tableName),
 		Item: map[string]*dynamodb.AttributeValue{
-			"lockId": {
-				S: aws.String(lockId),
+			"queueName": {
+				S: aws.String(queueName),
 			},
 			"clientId": {
 				S: aws.String(clientId),
@@ -43,7 +43,7 @@ func CreateQueueEntry(svc *dynamodb.DynamoDB, lockId, clientId string, entryTime
 			select {
 			case <-waitQ:
 				log.WithFields(log.Fields{"clientId": clientId}).Debug("Update lastUpdated")
-				err := updateQueueLastUpdated(svc, lockId, entryTimestamp, tableName)
+				err := updateQueueLastUpdated(svc, queueName, entryTimestamp, tableName)
 				if err != nil {
 					log.WithFields(log.Fields{"clientId": clientId, "tableName": tableName, "error": err}).Error("Error updating lastUpdated")
 				}
@@ -57,12 +57,12 @@ func CreateQueueEntry(svc *dynamodb.DynamoDB, lockId, clientId string, entryTime
 	return err
 }
 
-func DeleteQueueEntry(svc *dynamodb.DynamoDB, lockId, clientId string, entryTimestamp int64, tableName string) error {
+func DeleteQueueEntry(svc *dynamodb.DynamoDB, queueName, clientId string, entryTimestamp int64, tableName string) error {
 	_, err := svc.DeleteItem(&dynamodb.DeleteItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
-			"lockId": {
-				S: aws.String(lockId),
+			"queueName": {
+				S: aws.String(queueName),
 			},
 			"entryTimestamp": {
 				N: aws.String(strconv.FormatInt(entryTimestamp, 10)),
@@ -73,23 +73,23 @@ func DeleteQueueEntry(svc *dynamodb.DynamoDB, lockId, clientId string, entryTime
 }
 
 type QueueEntry struct {
-	LockId         string
+	queueName      string
 	ClientId       string
 	EntryTimestamp int64
 	LastUpdated    int64
 	Zombie         bool
 }
 
-func getQueueEntries(svc *dynamodb.DynamoDB, lockId, tableName string) ([]QueueEntry, error) {
+func getQueueEntries(svc *dynamodb.DynamoDB, queueName, tableName string) ([]QueueEntry, error) {
 	var entries []QueueEntry
 
 	// Define the initial query input
 	queryInput := &dynamodb.QueryInput{
 		TableName:              aws.String(tableName),
-		KeyConditionExpression: aws.String("lockId = :lockId"),
+		KeyConditionExpression: aws.String("queueName = :queueName"),
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":lockId": {
-				S: aws.String(lockId),
+			":queueName": {
+				S: aws.String(queueName),
 			},
 		},
 		ScanIndexForward: aws.Bool(true), // true for ascending, false for descending
@@ -106,8 +106,8 @@ func getQueueEntries(svc *dynamodb.DynamoDB, lockId, tableName string) ([]QueueE
 		for _, item := range result.Items {
 			entry := QueueEntry{}
 
-			if v, ok := item["lockId"]; ok && v.S != nil {
-				entry.LockId = *v.S
+			if v, ok := item["queueName"]; ok && v.S != nil {
+				entry.queueName = *v.S
 			}
 
 			if v, ok := item["clientId"]; ok && v.S != nil {
@@ -146,8 +146,8 @@ func IsQueueMemberZombie(lastUpdated int64) bool {
 	return time.Now().Unix()-lastUpdated > int64(threshold)
 }
 
-func checkFrontOfQueue(svc *dynamodb.DynamoDB, lockId, clientId, tableName string) (bool, []QueueEntry, error) {
-	entries, err := getQueueEntries(svc, lockId, tableName)
+func checkFrontOfQueue(svc *dynamodb.DynamoDB, queueName, clientId, tableName string) (bool, []QueueEntry, error) {
+	entries, err := getQueueEntries(svc, queueName, tableName)
 	if err != nil {
 		return false, []QueueEntry{}, err
 	}
@@ -172,14 +172,14 @@ func checkFrontOfQueue(svc *dynamodb.DynamoDB, lockId, clientId, tableName strin
 	return atFront, zombies, nil // The queue is empty or only contains the current client
 }
 
-func deleteZombies(svc *dynamodb.DynamoDB, lockId, tableName string, zombies []QueueEntry) error {
+func deleteZombies(svc *dynamodb.DynamoDB, queueName, tableName string, zombies []QueueEntry) error {
 	for _, zombie := range zombies {
 		log.WithFields(log.Fields{
 			"clientId":       zombie.ClientId,
 			"entryTimestamp": zombie.EntryTimestamp,
 		}).Warn("Deleting zombie queue entry for client")
 
-		err := DeleteQueueEntry(svc, lockId, zombie.ClientId, zombie.EntryTimestamp, tableName)
+		err := DeleteQueueEntry(svc, queueName, zombie.ClientId, zombie.EntryTimestamp, tableName)
 		if err != nil {
 			return err
 		}
@@ -188,14 +188,14 @@ func deleteZombies(svc *dynamodb.DynamoDB, lockId, tableName string, zombies []Q
 	return nil
 }
 
-func isClientAtFrontOfQueue(svc *dynamodb.DynamoDB, lockId, clientId, tableName string) (bool, error) {
-	atFront, zombies, err := checkFrontOfQueue(svc, lockId, clientId, tableName)
+func isClientAtFrontOfQueue(svc *dynamodb.DynamoDB, queueName, clientId, tableName string) (bool, error) {
+	atFront, zombies, err := checkFrontOfQueue(svc, queueName, clientId, tableName)
 	if err != nil {
 		return false, err
 	}
 
 	if len(zombies) > 0 {
-		err = deleteZombies(svc, lockId, tableName, zombies)
+		err = deleteZombies(svc, queueName, tableName, zombies)
 		if err != nil {
 			return false, err
 		}
@@ -204,12 +204,12 @@ func isClientAtFrontOfQueue(svc *dynamodb.DynamoDB, lockId, clientId, tableName 
 	return atFront, nil
 }
 
-func WaitForTurn(svc *dynamodb.DynamoDB, lockId, clientId, tableName string) chan bool {
+func WaitForTurn(svc *dynamodb.DynamoDB, queueName, clientId, tableName string) chan bool {
 	signalPipe := make(chan bool)
 	go func() {
 		for {
 			log.Info("Checking queue...")
-			atFront, err := isClientAtFrontOfQueue(svc, lockId, clientId, tableName)
+			atFront, err := isClientAtFrontOfQueue(svc, queueName, clientId, tableName)
 			if err != nil {
 				log.Error("Error checking queue:", err)
 				signalPipe <- false
@@ -221,19 +221,19 @@ func WaitForTurn(svc *dynamodb.DynamoDB, lockId, clientId, tableName string) cha
 				return
 			}
 			waitTime := int64(rand.Intn(15) + 15)
-			log.Infof("Not at front of queue. Waiting %d seconds till next check...\n", waitTime)
+			log.Infof("Not at front of queue. Waiting %d seconds till next check...", waitTime)
 			time.Sleep(time.Duration(waitTime) * time.Second)
 		}
 	}()
 	return signalPipe
 }
 
-func updateQueueLastUpdated(svc *dynamodb.DynamoDB, lockId string, entryTimestamp int64, tableName string) error {
+func updateQueueLastUpdated(svc *dynamodb.DynamoDB, queueName string, entryTimestamp int64, tableName string) error {
 	_, err := svc.UpdateItem(&dynamodb.UpdateItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
-			"lockId": {
-				S: aws.String(lockId),
+			"queueName": {
+				S: aws.String(queueName),
 			},
 			"entryTimestamp": {
 				N: aws.String(strconv.FormatInt(entryTimestamp, 10)),

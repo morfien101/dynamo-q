@@ -1,7 +1,9 @@
 name: dynamo-q
 description: |
   Github action that allows the running of dynamo-q server and client commands.
-  You should pass in as environment variables the auth details for the AWS account.
+  When using action server-start, you will need to provide authentication to AWS.
+  Authentication for AWS is left to the user to provide. It is generally expected
+  that this will be set using environment variables or a profile.
 
 inputs:
   action:
@@ -64,4 +66,8 @@ runs:
           $DYNAMOQ_WAITER -wait-for-lock
         elif [[ "${{ inputs.action }}" == "server-stop" ]]; then
           $DYNAMOQ_WAITER -shutdown
+          # We need to give the server time to shutdown.
+          # currently the client just send the signal and exits.
+          # It doesn't know when the server has actually stopped.
+          sleep 3
         fi

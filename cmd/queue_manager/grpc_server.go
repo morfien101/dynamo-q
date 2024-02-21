@@ -25,49 +25,49 @@ func newSubscription() updateSubscription {
 	}
 }
 
-type LockServer struct {
-	comms.UnimplementedLockServiceServer
+type QueueServer struct {
+	comms.UnimplementedQueueServiceServer
 	mu          sync.RWMutex
 	subscribers map[string]updateSubscription
-	hasLock     bool
+	isFront     bool
 	shutdown    chan bool
 }
 
-func newLockServer(shutdown chan bool) *LockServer {
-	return &LockServer{
-		hasLock:     false,
+func newQueueServer(shutdown chan bool) *QueueServer {
+	return &QueueServer{
+		isFront:     false,
 		shutdown:    shutdown,
 		subscribers: map[string]updateSubscription{},
 	}
 }
 
-func (s *LockServer) AcquiredLock() (*comms.LockResponse, error) {
+func (s *QueueServer) AtFront() (*comms.QueueStatus, error) {
 	s.mu.Lock()
-	s.hasLock = true
+	s.isFront = true
 	s.mu.Unlock()
 
 	s.updateSubscriptions()
 
-	return &comms.LockResponse{}, nil
+	return &comms.QueueStatus{}, nil
 }
 
-func (s *LockServer) updateSubscriptions() {
+func (s *QueueServer) updateSubscriptions() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	for _, sub := range s.subscribers {
-		sub.updates <- s.hasLock
+		sub.updates <- s.isFront
 	}
 }
 
-func (s *LockServer) IsLockHeld(ctx context.Context, req *comms.LockRequest) (*comms.LockResponse, error) {
+func (s *QueueServer) IsFrontOfQueue(ctx context.Context, req *comms.QueueRequest) (*comms.QueueStatus, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return &comms.LockResponse{IsHeld: s.hasLock}, nil
+	return &comms.QueueStatus{IsFront: s.isFront}, nil
 }
 
-func (s *LockServer) SubscribeLockStatus(req *comms.LockRequest, stream comms.LockService_SubscribeLockStatusServer) error {
+func (s *QueueServer) SubscribeQueueStatus(req *comms.QueueRequest, stream comms.QueueService_SubscribeQueueStatusServer) error {
 	sub := newSubscription()
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -80,16 +80,16 @@ func (s *LockServer) SubscribeLockStatus(req *comms.LockRequest, stream comms.Lo
 	go func() {
 		for update := range sub.updates {
 			log.WithField("id", id.String()).Debug("Sending update to subscriber")
-			if err := stream.Send(&comms.LockResponse{IsHeld: update}); err != nil {
+			if err := stream.Send(&comms.QueueStatus{IsFront: update}); err != nil {
 				// Handle error by removing the subscriber from the list.
 				return
 			}
 		}
 	}()
 
-	// If the lock is currently held, send an update immediately.
+	// If at the front of the queue, send an update immediately.
 	s.mu.RLock()
-	if s.hasLock {
+	if s.isFront {
 		sub.updates <- true
 	}
 	s.mu.RUnlock()
@@ -103,24 +103,23 @@ func (s *LockServer) SubscribeLockStatus(req *comms.LockRequest, stream comms.Lo
 	return nil
 }
 
-func (s *LockServer) Shutdown(ctx context.Context, req *comms.ShutdownRequest) (*comms.ShutdownResponse, error) {
+func (s *QueueServer) Shutdown(ctx context.Context, req *comms.ShutdownRequest) (*comms.ShutdownResponse, error) {
 	s.shutdown <- true
 	return &comms.ShutdownResponse{}, nil
 }
 
 // Start gRPC server
-func (s *LockServer) StartServer(host string, port int, stopChan chan bool, errChan chan error) {
+func (s *QueueServer) StartServer(host string, port int, stopChan chan bool, errChan chan error) error {
 	log.WithFields(log.Fields{"host": host, "port": strconv.Itoa(port)}).Info("Starting gRPC server")
 	lis, err := net.Listen("tcp", host+":"+strconv.Itoa(port))
 	if err != nil {
-		errChan <- fmt.Errorf("gRPC failure: %v", err)
-		// just swallow the stop signal
 		go func(chan bool) { <-stopChan }(stopChan)
-		return
+		// just swallow the stop signal
+		return fmt.Errorf("gRPC failure: %v", err)
 	}
 
 	grpcServer := grpc.NewServer()
-	comms.RegisterLockServiceServer(grpcServer, s)
+	comms.RegisterQueueServiceServer(grpcServer, s)
 	go func(chan error) {
 		state.mu.Lock()
 		state.grpcServerStarted = true
@@ -154,4 +153,6 @@ func (s *LockServer) StartServer(host string, port int, stopChan chan bool, errC
 
 		errChan <- nil
 	}(stopChan, errChan)
+
+	return nil
 }

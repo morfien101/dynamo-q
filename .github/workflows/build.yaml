@@ -45,9 +45,9 @@ jobs:
           mkdir -p artifacts
 
           manager_bin_name="dynamoq_manager"
-          manager_dir="cmd/lock_manager"
+          manager_dir="cmd/queue_manager"
           waiter_bin_name="dynamoq_waiter"
-          waiter_dir="cmd/lock_waiter"
+          waiter_dir="cmd/queue_checker"
 
           # Run the build for each supported OS using x86_64.
           # Building for windows.
