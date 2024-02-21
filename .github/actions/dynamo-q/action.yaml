@@ -1,6 +1,9 @@
 name: dynamo-q
 description: |
   Github action that allows the running of dynamo-q server and client commands.
+  The utilities will manage a queue in dynamodb for you. This allows you to queue
+  up work to be done by your github actions. This is useful when you have a lot of
+  work to do and must have every triggered actions run.
   When using action server-start, you will need to provide authentication to AWS.
   Authentication for AWS is left to the user to provide. It is generally expected
   that this will be set using environment variables or a profile.
@@ -10,14 +13,10 @@ inputs:
     description: 'The action to perform. Options: server-start, client-wait, server-stop'
     required: true
     default: client-wait
-  lock-id:
-    description: 'The lock id to use for the server. Required for start-server.'
+  queue-name:
+    description: 'The queue name to use for the server. Required for start-server.'
     required: false
     default: ''
-  lock-table:
-    description: 'The lock table to use for the server. Required for start-server.'
-    required: false
-    default: 'github-actions-dynamo-q-lock'
   queue-table:
     description: 'The queue table to use for the server. Required for start-server.'
     required: false
@@ -38,7 +37,11 @@ runs:
           output_name="/tmp/${payload%%_linux_amd64}"
           if [ ! -f "$output_name" ]; then
             echo "Downloading $payload"
-            download_url=$(curl -s https://api.github.com/repos/morfien101/dynamo-q/releases/latest | jq -r --arg name $payload '.assets[] | select(.name == $name) | .browser_download_url')
+            if [ "${{ inputs.version }}" = "latest" ]; then
+              download_url=$(curl -s https://api.github.com/repos/morfien101/dynamo-q/releases/latest | jq -r --arg name $payload '.assets[] | select(.name == $name) | .browser_download_url')
+            else
+              download_url="https://github.com/morfien101/dynamo-q/releases/download/${{ inputs.version }}/${payload}"
+            fi
             curl -L -o $output_name $download_url
             chmod 550 $output_name
           fi
@@ -49,7 +52,7 @@ runs:
             echo "DYNAMOQ_WAITER=$output_name" >> $GITHUB_ENV
           fi
         done
-    
+
     - name: run dynamo-q action
       shell: bash
       run: |
@@ -57,10 +60,9 @@ runs:
         if [[ "${{ inputs.action }}" == "server-start" ]]; then
           # Start the server and pass it to the background
           $DYNAMOQ_SERVER \
-          -lock-table "${{ inputs.lock-table }}" \
           -queue-table "${{ inputs.queue-table }}" \
           -client "${{ github.repository }}-${{ github.run_number }}" \
-          -lock "${{ inputs.lock-id }}" \
+          -queue-name "${{ inputs.queue-name }}" \
           &
         elif [[ "${{ inputs.action }}" == "client-wait" ]]; then
           $DYNAMOQ_WAITER -wait-for-lock
