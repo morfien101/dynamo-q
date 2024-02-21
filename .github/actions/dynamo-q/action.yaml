@@ -42,9 +42,9 @@ runs:
           fi
           
           if [[ "$output_name" =~ "manager" ]]; then
-            echo "DYNAMOQ_SERVER=/tmp/$output_name" >> $GITHUB_ENV
+            echo "DYNAMOQ_SERVER=$output_name" >> $GITHUB_ENV
           elif [[ "$output_name" =~ "waiter" ]]; then
-            echo "DYNAMOQ_WAITER=/tmp/$output_name" >> $GITHUB_ENV
+            echo "DYNAMOQ_WAITER=$output_name" >> $GITHUB_ENV
           fi
         done
     
