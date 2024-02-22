@@ -1,3 +1,3 @@
-# Initial release
+# Queue for all
 
-First release
+This is the first release of DynamoQ which allows github actions to queue jobs.
