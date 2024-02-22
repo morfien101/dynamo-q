@@ -1,12 +1,5 @@
 name: dynamo-q
-description: |
-  Github action that allows the running of dynamo-q server and client commands.
-  The utilities will manage a queue in dynamodb for you. This allows you to queue
-  up work to be done by your github actions. This is useful when you have a lot of
-  work to do and must have every triggered actions run.
-  When using action server-start, you will need to provide authentication to AWS.
-  Authentication for AWS is left to the user to provide. It is generally expected
-  that this will be set using environment variables or a profile.
+description: Allows you to run DynamoQ server and client in your actions.
 
 inputs:
   action:
