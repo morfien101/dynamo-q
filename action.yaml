@@ -1,5 +1,8 @@
 name: dynamo-q
 description: Allows you to run DynamoQ server and client in your actions.
+branding:
+  icon: users
+  color: green
 
 inputs:
   action:
