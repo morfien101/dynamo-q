@@ -42,7 +42,7 @@ runs:
             else
               download_url="https://github.com/morfien101/dynamo-q/releases/download/${{ inputs.version }}/${payload}"
             fi
-            curl -L -o $output_name $download_url
+            curl -sSL -o $output_name $download_url
             chmod 550 $output_name
           fi
           
