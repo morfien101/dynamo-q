@@ -17,6 +17,14 @@ inputs:
     description: 'The queue table to use for the server. Required for start-server.'
     required: false
     default: 'github-actions-dynamo-q-queue'
+  backend:
+    description: 'Queue backend to use. Options: aws, gcp'
+    required: false
+    default: 'aws'
+  gcp-project:
+    description: 'GCP project ID when using the gcp backend.'
+    required: false
+    default: ''
   version:
     description: 'The version of dynamo-q to use'
     required: false
@@ -57,6 +65,8 @@ runs:
           # Start the server and pass it to the background
           $DYNAMOQ_SERVER \
           -queue-table "${{ inputs.queue-table }}" \
+          -backend "${{ inputs.backend }}" \
+          -gcp-project "${{ inputs.gcp-project }}" \
           -client "${{ github.repository }}-${{ github.run_number }}" \
           -queue-name "${{ inputs.queue-name }}" \
           &

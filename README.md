@@ -1,5 +1,5 @@
 # Dynamo-Q
-Queue process for AWS DynamoDB.
+Queue process for AWS DynamoDB or Google Cloud Firestore.
 
 Primarily intended to be used with Github actions to allow jobs to queue up.
 Be warned, queuing jobs consume usage minutes.
@@ -10,7 +10,7 @@ This sucks when you want all the jobs to run.
 
 This action solves this.
 
-You will need to have access to AWS DynamoDB for this action to work.
+You will need access to DynamoDB (AWS) or Firestore (GCP) for this action to work.
 Instruction for setup below.
 
 # AWS Configuration required
@@ -42,6 +42,66 @@ resource "aws_dynamodb_table" "github_actions_dynamoq" {
   tags = {
     Name = "Github Actions Queue Table"
   }
+}
+```
+
+## Terraform (AWS IAM, optional)
+
+If you manage IAM with Terraform, this is a minimal example for OIDC + role + policy:
+
+```tf
+resource "aws_iam_openid_connect_provider" "github" {
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = ["<github_oidc_thumbprint>"]
+}
+
+resource "aws_iam_role" "dynamoq" {
+  name = "github-actions-dynamoq"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.github.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = "repo:<org>/<repo>:*"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_policy" "dynamoq" {
+  name = "dynamoq-policy"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:UpdateItem",
+        "dynamodb:Query",
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:ConditionCheckItem"
+      ]
+      Resource = [
+        "arn:aws:dynamodb:ap-south-1:<account number>:table/github-actions-dynamo-q-queue"
+      ]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "dynamoq" {
+  role       = aws_iam_role.dynamoq.name
+  policy_arn = aws_iam_policy.dynamoq.arn
 }
 ```
 
@@ -131,6 +191,7 @@ jobs:
           action: server-start
           queue-name: randy-tester-github-action
           queue-table: QueueTable
+          backend: aws
       # Waits for the action to get to the front of the queue
       - name: wait for lock
         uses: morfien101/dynamo-q@<current_version>
@@ -149,6 +210,132 @@ jobs:
         uses: morfien101/dynamo-q@<current_version>
         with:
           action: server-stop
+
+# GCP Firestore Configuration
+
+## Firestore collection
+
+Firestore uses a single collection for queue entries. Reuse the same `queue-table` input as the collection name.
+
+Each document stores:
+
+- `queueName` (string)
+- `clientId` (string)
+- `entryTimestamp` (number)
+- `lastUpdated` (number)
+
+The action queries by `queueName` and orders by `entryTimestamp`. Firestore may require a composite index for
+`queueName` + `entryTimestamp` if prompted.
+
+## IAM Permissions (Workload Identity Federation)
+
+Use GitHub OIDC to impersonate a Google service account. The service account needs Firestore access:
+
+- `roles/firestore.user` (read/write)
+
+Grant the GitHub principal access to impersonate the service account:
+
+- `roles/iam.workloadIdentityUser` on the service account, to the GitHub principal set.
+
+## Terraform (GCP)
+
+This is a minimal example to create the Firestore database, service account, and workload identity wiring:
+
+```tf
+resource "google_project_service" "firestore" {
+  project = var.project_id
+  service = "firestore.googleapis.com"
+}
+
+resource "google_firestore_database" "default" {
+  project     = var.project_id
+  name        = "(default)"
+  location_id = "us-central"
+  type        = "FIRESTORE_NATIVE"
+}
+
+resource "google_service_account" "dynamoq" {
+  project      = var.project_id
+  account_id   = "github-actions-dynamoq"
+  display_name = "GitHub Actions DynamoQ"
+}
+
+resource "google_project_iam_member" "firestore_user" {
+  project = var.project_id
+  role    = "roles/firestore.user"
+  member  = "serviceAccount:${google_service_account.dynamoq.email}"
+}
+
+resource "google_iam_workload_identity_pool" "github" {
+  workload_identity_pool_id = "github-actions"
+  display_name              = "GitHub Actions"
+}
+
+resource "google_iam_workload_identity_pool_provider" "github" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github"
+  display_name                       = "GitHub OIDC"
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+  attribute_mapping = {
+    "google.subject" = "assertion.sub"
+  }
+}
+
+resource "google_service_account_iam_member" "github_wif" {
+  service_account_id = google_service_account.dynamoq.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/<org>/<repo>"
+}
+```
+
+## Example workflow (GCP)
+
+```yaml
+name: Test DynamoQ (GCP)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+
+jobs:
+  do_it:
+    runs-on: ubuntu-latest
+    steps:
+      - name: GCP Auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/pool-id/providers/provider-id
+          service_account: github-actions-queue@your-project.iam.gserviceaccount.com
+
+      - name: setup lock
+        uses: morfien101/dynamo-q@<current_version>
+        with:
+          action: server-start
+          queue-name: randy-tester-github-action
+          queue-table: QueueCollection
+          backend: gcp
+          gcp-project: your-project-id
+
+      - name: wait for lock
+        uses: morfien101/dynamo-q@<current_version>
+        with:
+          action: client-wait
+
+      - name: do something
+        run: echo "I am doing something"
+
+      - name: release lock
+        if: always()
+        uses: morfien101/dynamo-q@<current_version>
+        with:
+          action: server-stop
+```
+
+The `backend` input defaults to `aws`. When using `gcp`, set `gcp-project` or the `GCP_PROJECT`/`GOOGLE_CLOUD_PROJECT` environment variables.
 ```
 
 # Generate gRPC code
