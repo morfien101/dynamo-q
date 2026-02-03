@@ -33,6 +33,10 @@ inputs:
     description: 'The version of dynamo-q to use'
     required: false
     default: 'latest'
+  log-level:
+    description: 'The log level to use. Options are: trace, debug, info, warn, error, fatal, panic'
+    required: false
+    default: 'info'
 
 
 runs:
@@ -74,6 +78,7 @@ runs:
           -firestore-database "${{ inputs.gcp-database }}" \
           -client "${{ github.repository }}-${{ github.run_number }}" \
           -queue-name "${{ inputs.queue-name }}" \
+          -log-level "${{ inputs.log-level }}" \
           &
         elif [[ "${{ inputs.action }}" == "client-wait" ]]; then
           $DYNAMOQ_WAITER -wait-for-turn

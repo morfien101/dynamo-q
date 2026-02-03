@@ -85,7 +85,7 @@ func main() {
 		if ok, err := subscribeQueueStatus(conn); ok {
 			os.Exit(0)
 		} else {
-			log.Fatalf("Could not join check queue status: %v", err)
+			log.Fatalf("Could not check queue status: %v", err)
 		}
 	}
 
