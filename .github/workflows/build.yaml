@@ -71,6 +71,12 @@ jobs:
           done
 
           for file in $(ls ./artifacts/*.fat); do
+            # Apple currently does not allow upx compression on macOS binaries.
+            if [[ "$file" == *"darwin"* ]]; then
+              mv $file ${file%%.fat}
+              continue
+            fi
+            echo "Compressing $file with upx..."
             upx -9 -o ${file%%.fat} $file
             rm -f $file
           done
