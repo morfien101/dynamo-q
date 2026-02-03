@@ -1,3 +1,6 @@
-# Queue for all
+# Adding in GCP support
 
-This is the first release of DynamoQ which allows github actions to queue jobs.
+This release adds in GCP (Google) support by making use of FireStore.
+It should still be pretty much free since usage will be low unless you have lots of jobs.
+
+See the updated README for configuration instructions.

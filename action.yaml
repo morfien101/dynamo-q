@@ -25,6 +25,10 @@ inputs:
     description: 'GCP project ID when using the gcp backend.'
     required: false
     default: ''
+  gcp-database:
+    description: 'GCP firestore database ID when using the gcp backend.'
+    required: false
+    default: 'github-dynamoq'
   version:
     description: 'The version of dynamo-q to use'
     required: false
@@ -67,6 +71,7 @@ runs:
           -queue-table "${{ inputs.queue-table }}" \
           -backend "${{ inputs.backend }}" \
           -gcp-project "${{ inputs.gcp-project }}" \
+          -gcp-database "${{ inputs.gcp-database }}" \
           -client "${{ github.repository }}-${{ github.run_number }}" \
           -queue-name "${{ inputs.queue-name }}" \
           &

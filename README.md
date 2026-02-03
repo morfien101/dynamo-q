@@ -2,7 +2,7 @@
 Queue process for AWS DynamoDB or Google Cloud Firestore.
 
 Primarily intended to be used with Github actions to allow jobs to queue up.
-Be warned, queuing jobs consume usage minutes.
+Be warned, queuing jobs consume usage minutes as they are queued while running.
 
 Github actions only have a queue of running + 1 at most.
 The concurrency model will cancel any queued job that is trying to get a hold on a lock.
@@ -17,7 +17,7 @@ Instruction for setup below.
 
 ## DynamoDB Table
 
-I am going to put the terraform block that creates the table below as it gives a really easy to read expression of the table that can be converted with ease to whatever you use.
+This Terraform block that creates the table below, gives a really easy to read expression of the table that can be converted with ease to whatever you use.
 
 ```tf
 resource "aws_dynamodb_table" "github_actions_dynamoq" {
@@ -159,7 +159,7 @@ permissions to get queuing working.
 }
 ```
 
-# Usage
+# Usage for AWS
 
 Below is an example job you can use to setup the queue.
 
@@ -203,13 +203,14 @@ jobs:
         run: echo "I am doing something"
       
       # Remember to leave the queue.
-      # Don't worry if your job crashes, your queue slow will expired after 2 mins
+      # Don't worry if your job crashes, your queue entry will expired after 2 mins
       # and the next in line will remove your zombie queue member and carry on.
       - name: release lock
         if: always()
         uses: morfien101/dynamo-q@<current_version>
         with:
           action: server-stop
+
 
 # GCP Firestore Configuration
 
@@ -224,14 +225,14 @@ Each document stores:
 - `entryTimestamp` (number)
 - `lastUpdated` (number)
 
-The action queries by `queueName` and orders by `entryTimestamp`. Firestore may require a composite index for
-`queueName` + `entryTimestamp` if prompted.
+The action queries by `queueName` and orders by `entryTimestamp`. Firestore will require a composite index for
+`queueName` + `entryTimestamp`, which is included in the terraform below.
 
 ## IAM Permissions (Workload Identity Federation)
 
 Use GitHub OIDC to impersonate a Google service account. The service account needs Firestore access:
 
-- `roles/firestore.user` (read/write)
+- `roles/datastore.user` (read/write)
 
 Grant the GitHub principal access to impersonate the service account:
 
@@ -249,7 +250,7 @@ resource "google_project_service" "firestore" {
 
 resource "google_firestore_database" "default" {
   project     = var.project_id
-  name        = "(default)"
+  name        = "github-dynamoq"
   location_id = "us-central"
   type        = "FIRESTORE_NATIVE"
 }
@@ -287,6 +288,30 @@ resource "google_service_account_iam_member" "github_wif" {
   service_account_id = google_service_account.dynamoq.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/<org>/<repo>"
+}
+
+# This sets up the index required for the queues when you use a collection called github-queues
+# Something like this on the cli: -queue-table github-queues -firestore-database github-dynamoq
+# Change names as required for the database and table.
+resource "google_firestore_index" "github_queues_queueName_entryTimestamp" {
+  project    = var.project_id
+  database   = "github-dynamoq"
+  collection = "github-queues"
+
+  fields {
+    field_path = "queueName"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "entryTimestamp"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "__name__"
+    order      = "ASCENDING"
+  }
 }
 ```
 

@@ -15,8 +15,16 @@ type FirestoreStore struct {
 	collection string
 }
 
-func NewFirestoreStore(ctx context.Context, projectID, collection string) (*FirestoreStore, error) {
-	client, err := firestore.NewClient(ctx, projectID)
+func NewFirestoreStore(ctx context.Context, projectID, databaseID, collection string) (*FirestoreStore, error) {
+	var (
+		client *firestore.Client
+		err    error
+	)
+	if databaseID != "" {
+		client, err = firestore.NewClientWithDatabase(ctx, projectID, databaseID)
+	} else {
+		client, err = firestore.NewClient(ctx, projectID)
+	}
 	if err != nil {
 		return nil, err
 	}

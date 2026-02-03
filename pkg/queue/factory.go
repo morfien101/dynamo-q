@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 )
 
-func NewStore(ctx context.Context, backend, queueTableName, gcpProject string) (Store, error) {
+func NewStore(ctx context.Context, backend, queueTableName, gcpProject, firestoreDatabase string) (Store, error) {
 	selected := strings.ToLower(strings.TrimSpace(backend))
 	if selected == "" {
 		selected = "aws"
@@ -30,7 +30,7 @@ func NewStore(ctx context.Context, backend, queueTableName, gcpProject string) (
 		if projectID == "" {
 			return nil, fmt.Errorf("gcp project ID is required when backend is set to gcp/firestore")
 		}
-		return NewFirestoreStore(ctx, projectID, queueTableName)
+		return NewFirestoreStore(ctx, projectID, strings.TrimSpace(firestoreDatabase), queueTableName)
 	default:
 		return nil, fmt.Errorf("unsupported backend: %s", backend)
 	}

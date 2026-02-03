@@ -54,6 +54,7 @@ func main() {
 	port := flag.Int("port", 50051, "The port to listen on.")
 	backend := flag.String("backend", "", "The queue backend to use. Options: aws, gcp")
 	gcpProject := flag.String("gcp-project", "", "The GCP project ID to use when backend is gcp.")
+	firestoreDatabase := flag.String("firestore-database", "", "Firestore database ID to use (defaults to (default) if empty).")
 	logLevel := flag.String("log-level", "info", "The log level to use. Options are: trace, debug, info, warn, error, fatal, panic")
 	showVersion := flag.Bool("v", false, "Shows the version.")
 	help := flag.Bool("h", false, "Shows the help message.")
@@ -104,7 +105,7 @@ func main() {
 		log.Fatalf("Failed to start gRPC server: %v", err)
 	}
 
-	store, err := queue.NewStore(ctx, *backend, *queueTableName, *gcpProject)
+	store, err := queue.NewStore(ctx, *backend, *queueTableName, *gcpProject, *firestoreDatabase)
 	if err != nil {
 		log.Fatalf("Failed to initialize queue backend: %v", err)
 	}
@@ -179,7 +180,7 @@ func createQueueEntry(ctx context.Context, store queue.Store, queueName, clientN
 		}
 		err := store.CreateEntry(ctx, queueName, clientName, startTime)
 		if err != nil {
-			log.Errorf("try %d - failed to create queue entry:", err)
+			log.Errorf("try %d - failed to create queue entry: %v", try, err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
