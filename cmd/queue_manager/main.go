@@ -54,7 +54,7 @@ func main() {
 	port := flag.Int("port", 50051, "The port to listen on.")
 	backend := flag.String("backend", "", "The queue backend to use. Options: aws, gcp")
 	gcpProject := flag.String("gcp-project", "", "The GCP project ID to use when backend is gcp.")
-	firestoreDatabase := flag.String("firestore-database", "", "Firestore database ID to use (defaults to (default) if empty).")
+	firestoreDatabase := flag.String("firestore-database", "github-dynamoq", "Firestore database ID to use.")
 	logLevel := flag.String("log-level", "info", "The log level to use. Options are: trace, debug, info, warn, error, fatal, panic")
 	showVersion := flag.Bool("v", false, "Shows the version.")
 	help := flag.Bool("h", false, "Shows the help message.")

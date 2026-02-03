@@ -71,7 +71,7 @@ runs:
           -queue-table "${{ inputs.queue-table }}" \
           -backend "${{ inputs.backend }}" \
           -gcp-project "${{ inputs.gcp-project }}" \
-          -gcp-database "${{ inputs.gcp-database }}" \
+          -firestore-database "${{ inputs.gcp-database }}" \
           -client "${{ github.repository }}-${{ github.run_number }}" \
           -queue-name "${{ inputs.queue-name }}" \
           &
