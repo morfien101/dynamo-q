@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"time"
 
@@ -13,7 +14,9 @@ func IsQueueMemberZombie(lastUpdated int64) bool {
 	return time.Now().Unix()-lastUpdated > threshold
 }
 
-func StartHeartbeat(ctx context.Context, store Store, queueName string, entryTimestamp int64, stop <-chan bool) {
+// StartHeartbeat keeps the client's entry fresh. If the entry disappears, the heartbeat
+// stops and onLost is called, since the client can no longer reach the front of the queue.
+func StartHeartbeat(ctx context.Context, store Store, queueName, clientID string, entryTimestamp int64, stop <-chan bool, onLost func()) {
 	go func() {
 		waitQ := make(chan bool)
 		wait := func(c chan bool) {
@@ -29,7 +32,13 @@ func StartHeartbeat(ctx context.Context, store Store, queueName string, entryTim
 				return
 			case <-waitQ:
 				log.WithFields(log.Fields{"queueName": queueName}).Debug("Update lastUpdated")
-				if err := store.UpdateHeartbeat(ctx, queueName, entryTimestamp); err != nil {
+				err := store.UpdateHeartbeat(ctx, queueName, clientID, entryTimestamp)
+				if errors.Is(err, ErrEntryNotFound) {
+					log.WithFields(log.Fields{"queueName": queueName, "clientId": clientID}).Error("Queue entry is gone, stopping heartbeat")
+					onLost()
+					return
+				}
+				if err != nil {
 					log.WithFields(log.Fields{"queueName": queueName, "error": err}).Error("Error updating lastUpdated")
 				}
 			case <-stop:
@@ -78,7 +87,8 @@ func checkFrontOfQueue(ctx context.Context, store Store, queueName, clientID str
 	zombies := []QueueEntry{}
 
 	for _, entry := range entries {
-		if IsQueueMemberZombie(entry.LastUpdated) {
+		// An entry without a clientId can never be matched, so it would block the queue forever.
+		if entry.ClientID == "" || IsQueueMemberZombie(entry.LastUpdated) {
 			zombies = append(zombies, entry)
 			continue
 		}
@@ -100,7 +110,7 @@ func deleteZombies(ctx context.Context, store Store, queueName string, zombies [
 			"entryTimestamp": zombie.EntryTimestamp,
 		}).Warn("Deleting zombie queue entry for client")
 
-		if err := store.DeleteEntry(ctx, queueName, zombie.EntryTimestamp); err != nil {
+		if err := store.DeleteEntry(ctx, queueName, zombie.ClientID, zombie.EntryTimestamp); err != nil {
 			return err
 		}
 	}

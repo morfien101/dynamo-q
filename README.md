@@ -210,7 +210,9 @@ jobs:
         uses: morfien101/dynamo-q@<current_version>
         with:
           action: server-stop
+```
 
+> Use the same `version` for the `server-start`, `client-wait` and `server-stop` steps. Mixing versions mixes binaries.
 
 # GCP Firestore Configuration
 
