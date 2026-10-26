@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -115,7 +116,7 @@ func main() {
 		}
 	}()
 
-	err = createQueueEntry(ctx, store, *queueName, *clientName, startTime, stopQueueHeartBeat)
+	startTime, err = createQueueEntry(ctx, store, *queueName, *clientName, startTime, stopQueueHeartBeat)
 	if err != nil {
 		log.Error("Failed to create queue entry: ", err)
 		os.Exit(1)
@@ -144,8 +145,7 @@ func attemptCleanExit(ctx context.Context, store queue.Store, queueName, clientN
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 
-	// Remove the queue entry
-	stopQueueHeartBeat <- true
+	// Remove the queue entry. Close rather than send: the heartbeat may already have stopped.
 	close(stopQueueHeartBeat)
 	if state.queueEntryCreated {
 		err := releaseQueueSlot(ctx, store, queueName, clientName, startTime)
@@ -170,17 +170,25 @@ func attemptCleanExit(ctx context.Context, store queue.Store, queueName, clientN
 	return exitCode
 }
 
-func createQueueEntry(ctx context.Context, store queue.Store, queueName, clientName string, startTime int64, stopQueueHeartBeat chan bool) error {
+// createQueueEntry returns the entry timestamp actually used, which moves forward
+// if another client already holds the same second.
+func createQueueEntry(ctx context.Context, store queue.Store, queueName, clientName string, startTime int64, stopQueueHeartBeat chan bool) (int64, error) {
 	log.Info("Create queue entry")
 	// Create a queue entry
 	// Try 3 times to create a queue entry in case of network of throttling issues
-	for try := 0; try <= 3; try++ {
+	for try := 0; ; {
 		if try == 3 {
-			return fmt.Errorf("failed to create queue entry after 3 attempts")
+			return 0, fmt.Errorf("failed to create queue entry after 3 attempts")
 		}
 		err := store.CreateEntry(ctx, queueName, clientName, startTime)
+		if errors.Is(err, queue.ErrEntryExists) {
+			log.Infof("queue slot %d is taken by another client, trying the next one", startTime)
+			startTime++
+			continue
+		}
 		if err != nil {
 			log.Errorf("try %d - failed to create queue entry: %v", try, err)
+			try++
 			time.Sleep(3 * time.Second)
 			continue
 		}
@@ -189,17 +197,30 @@ func createQueueEntry(ctx context.Context, store queue.Store, queueName, clientN
 		state.mu.Unlock()
 		break
 	}
-	log.Info("Queue entry created successfully")
-	queue.StartHeartbeat(ctx, store, queueName, startTime, stopQueueHeartBeat)
+	log.WithField("entryTimestamp", startTime).Info("Queue entry created successfully")
+	queue.StartHeartbeat(ctx, store, queueName, clientName, startTime, stopQueueHeartBeat, onQueueEntryLost)
 
-	return nil
+	return startTime, nil
+}
+
+func onQueueEntryLost() {
+	state.mu.RLock()
+	atFront := state.AtFront
+	state.mu.RUnlock()
+	if atFront {
+		log.Warn("Queue entry was removed while at the front of the queue")
+		return
+	}
+	// Exiting closes the gRPC stream so client-wait fails instead of waiting forever.
+	log.Error("Queue entry was removed before reaching the front of the queue, exiting")
+	os.Exit(1)
 }
 
 func waitForTurn(ctx context.Context, store queue.Store, queueName, clientName string, startTime int64) error {
 	if ok := <-queue.WaitForTurn(ctx, store, queueName, clientName); !ok {
 		log.Error("There was an error waiting in the queue. See logs for details")
 		log.Info("Attempting to clear my queue entry")
-		err := store.DeleteEntry(ctx, queueName, startTime)
+		err := store.DeleteEntry(ctx, queueName, clientName, startTime)
 		if err != nil {
 			log.Errorf("Failed to delete queue entry: %v", err)
 		} else {
@@ -220,7 +241,7 @@ func waitForTurn(ctx context.Context, store queue.Store, queueName, clientName s
 
 func releaseQueueSlot(ctx context.Context, store queue.Store, queueName, clientName string, startTime int64) error {
 	log.Info("Releasing queue queue entry")
-	err := store.DeleteEntry(ctx, queueName, startTime)
+	err := store.DeleteEntry(ctx, queueName, clientName, startTime)
 	if err != nil {
 		return fmt.Errorf("failed to delete queue entry: %v", err)
 	} else {

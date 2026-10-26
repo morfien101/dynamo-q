@@ -2,10 +2,12 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
@@ -36,11 +38,19 @@ func (s *DynamoDBStore) CreateEntry(_ context.Context, queueName, clientID strin
 				N: aws.String(strconv.FormatInt(entryTimestamp, 10)),
 			},
 		},
+		// Never overwrite another client's entry. Matching our own clientId keeps retries idempotent.
+		ConditionExpression: aws.String("attribute_not_exists(entryTimestamp) OR clientId = :clientId"),
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":clientId": {S: aws.String(clientID)},
+		},
 	})
+	if isConditionalCheckFailed(err) {
+		return ErrEntryExists
+	}
 	return err
 }
 
-func (s *DynamoDBStore) DeleteEntry(_ context.Context, queueName string, entryTimestamp int64) error {
+func (s *DynamoDBStore) DeleteEntry(_ context.Context, queueName, clientID string, entryTimestamp int64) error {
 	_, err := s.svc.DeleteItem(&dynamodb.DeleteItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -51,7 +61,13 @@ func (s *DynamoDBStore) DeleteEntry(_ context.Context, queueName string, entryTi
 				N: aws.String(strconv.FormatInt(entryTimestamp, 10)),
 			},
 		},
+		ConditionExpression:       aws.String(clientIDCondition(clientID)),
+		ExpressionAttributeValues: clientIDValues(clientID),
 	})
+	if isConditionalCheckFailed(err) {
+		// Already gone or owned by someone else: nothing of ours to delete.
+		return nil
+	}
 	return err
 }
 
@@ -111,7 +127,7 @@ func (s *DynamoDBStore) ListEntries(_ context.Context, queueName string) ([]Queu
 	return entries, nil
 }
 
-func (s *DynamoDBStore) UpdateHeartbeat(_ context.Context, queueName string, entryTimestamp int64) error {
+func (s *DynamoDBStore) UpdateHeartbeat(_ context.Context, queueName, clientID string, entryTimestamp int64) error {
 	_, err := s.svc.UpdateItem(&dynamodb.UpdateItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -123,13 +139,40 @@ func (s *DynamoDBStore) UpdateHeartbeat(_ context.Context, queueName string, ent
 			},
 		},
 		UpdateExpression: aws.String("SET lastUpdated = :lastUpdated"),
+		// UpdateItem is an upsert; without this condition a heartbeat recreates a deleted entry with no clientId.
+		ConditionExpression: aws.String("clientId = :clientId"),
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":lastUpdated": {
 				N: aws.String(strconv.FormatInt(time.Now().Unix(), 10)),
 			},
+			":clientId": {S: aws.String(clientID)},
 		},
 	})
+	if isConditionalCheckFailed(err) {
+		return ErrEntryNotFound
+	}
 	return err
+}
+
+// clientIDCondition matches entries owned by clientID. An empty clientID targets
+// malformed entries that have no clientId attribute at all.
+func clientIDCondition(clientID string) string {
+	if clientID == "" {
+		return "attribute_exists(entryTimestamp) AND attribute_not_exists(clientId)"
+	}
+	return "clientId = :clientId"
+}
+
+func clientIDValues(clientID string) map[string]*dynamodb.AttributeValue {
+	if clientID == "" {
+		return nil
+	}
+	return map[string]*dynamodb.AttributeValue{":clientId": {S: aws.String(clientID)}}
+}
+
+func isConditionalCheckFailed(err error) bool {
+	var aerr awserr.Error
+	return errors.As(err, &aerr) && aerr.Code() == dynamodb.ErrCodeConditionalCheckFailedException
 }
 
 func (s *DynamoDBStore) Close() error {

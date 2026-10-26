@@ -8,6 +8,8 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type FirestoreStore struct {
@@ -32,20 +34,35 @@ func NewFirestoreStore(ctx context.Context, projectID, databaseID, collection st
 }
 
 func (s *FirestoreStore) CreateEntry(ctx context.Context, queueName, clientID string, entryTimestamp int64) error {
-	docID := firestoreDocID(queueName, entryTimestamp)
-	_, err := s.client.Collection(s.collection).Doc(docID).Set(ctx, map[string]interface{}{
-		"queueName":      queueName,
-		"clientId":       clientID,
-		"entryTimestamp": entryTimestamp,
-		"lastUpdated":    entryTimestamp,
+	ref := s.client.Collection(s.collection).Doc(firestoreDocID(queueName, entryTimestamp))
+	return s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		owner, exists, err := docOwner(tx, ref)
+		if err != nil {
+			return err
+		}
+		// Never overwrite another client's entry. Matching our own clientId keeps retries idempotent.
+		if exists && owner != clientID {
+			return ErrEntryExists
+		}
+		return tx.Set(ref, map[string]interface{}{
+			"queueName":      queueName,
+			"clientId":       clientID,
+			"entryTimestamp": entryTimestamp,
+			"lastUpdated":    entryTimestamp,
+		})
 	})
-	return err
 }
 
-func (s *FirestoreStore) DeleteEntry(ctx context.Context, queueName string, entryTimestamp int64) error {
-	docID := firestoreDocID(queueName, entryTimestamp)
-	_, err := s.client.Collection(s.collection).Doc(docID).Delete(ctx)
-	return err
+func (s *FirestoreStore) DeleteEntry(ctx context.Context, queueName, clientID string, entryTimestamp int64) error {
+	ref := s.client.Collection(s.collection).Doc(firestoreDocID(queueName, entryTimestamp))
+	return s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		owner, exists, err := docOwner(tx, ref)
+		if err != nil || !exists || owner != clientID {
+			// Already gone or owned by someone else: nothing of ours to delete.
+			return err
+		}
+		return tx.Delete(ref)
+	})
 }
 
 func (s *FirestoreStore) ListEntries(ctx context.Context, queueName string) ([]QueueEntry, error) {
@@ -87,13 +104,31 @@ func (s *FirestoreStore) ListEntries(ctx context.Context, queueName string) ([]Q
 	return entries, nil
 }
 
-func (s *FirestoreStore) UpdateHeartbeat(ctx context.Context, queueName string, entryTimestamp int64) error {
-	docID := firestoreDocID(queueName, entryTimestamp)
-	_, err := s.client.Collection(s.collection).Doc(docID).Update(ctx, []firestore.Update{{
-		Path:  "lastUpdated",
-		Value: time.Now().Unix(),
-	}})
-	return err
+func (s *FirestoreStore) UpdateHeartbeat(ctx context.Context, queueName, clientID string, entryTimestamp int64) error {
+	ref := s.client.Collection(s.collection).Doc(firestoreDocID(queueName, entryTimestamp))
+	return s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		owner, exists, err := docOwner(tx, ref)
+		if err != nil {
+			return err
+		}
+		if !exists || owner != clientID {
+			return ErrEntryNotFound
+		}
+		return tx.Update(ref, []firestore.Update{{Path: "lastUpdated", Value: time.Now().Unix()}})
+	})
+}
+
+// docOwner returns the clientId stored on the document and whether the document exists.
+func docOwner(tx *firestore.Transaction, ref *firestore.DocumentRef) (string, bool, error) {
+	doc, err := tx.Get(ref)
+	if status.Code(err) == codes.NotFound {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	owner, _ := doc.Data()["clientId"].(string)
+	return owner, true, nil
 }
 
 func (s *FirestoreStore) Close() error {
