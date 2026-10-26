@@ -70,6 +70,10 @@ runs:
       run: |
         echo "Running dynamo-q action: ${{ inputs.action }}"
         if [[ "${{ inputs.action }}" == "server-start" ]]; then
+          # The manager outlives this step, so its output would be lost from the job log.
+          # Write it to a file that client-wait and server-stop print.
+          DYNAMOQ_LOG="${RUNNER_TEMP:-/tmp}/dynamoq_manager.log"
+          echo "DYNAMOQ_LOG=$DYNAMOQ_LOG" >> $GITHUB_ENV
           # Start the server and pass it to the background
           $DYNAMOQ_SERVER \
           -queue-table "${{ inputs.queue-table }}" \
@@ -79,13 +83,31 @@ runs:
           -client "${{ github.repository }}-${{ github.run_number }}" \
           -queue-name "${{ inputs.queue-name }}" \
           -log-level "${{ inputs.log-level }}" \
-          &
+          > "$DYNAMOQ_LOG" 2>&1 &
         elif [[ "${{ inputs.action }}" == "client-wait" ]]; then
-          $DYNAMOQ_WAITER -wait-for-turn
+          if [ ! -f "${DYNAMOQ_LOG:-}" ]; then
+            $DYNAMOQ_WAITER -wait-for-turn
+            exit
+          fi
+          # Stream the manager's log while we wait.
+          tail -n +1 -f "$DYNAMOQ_LOG" &
+          tail_pid=$!
+          rc=0
+          $DYNAMOQ_WAITER -wait-for-turn || rc=$?
+          sleep 1
+          kill $tail_pid 2>/dev/null || true
+          # server-stop picks up the log from here.
+          echo "DYNAMOQ_LOG_OFFSET=$(( $(wc -c < "$DYNAMOQ_LOG") ))" >> $GITHUB_ENV
+          exit $rc
         elif [[ "${{ inputs.action }}" == "server-stop" ]]; then
           $DYNAMOQ_WAITER -shutdown
           # We need to give the server time to shutdown.
           # currently the client just send the signal and exits.
           # It doesn't know when the server has actually stopped.
           sleep 3
+          if [ -f "${DYNAMOQ_LOG:-}" ]; then
+            echo "::group::dynamo-q manager log"
+            tail -c +$(( ${DYNAMOQ_LOG_OFFSET:-0} + 1 )) "$DYNAMOQ_LOG"
+            echo "::endgroup::"
+          fi
         fi
