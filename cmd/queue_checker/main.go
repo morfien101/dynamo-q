@@ -7,17 +7,22 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 
 	"github.com/morfien101/dynamo-q/pkg/comms"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 var (
 	version = "development"
 )
+
+// How long to wait for the queue manager to start listening.
+const connectTimeout = 30 * time.Second
 
 func helpMessage() {
 	fmt.Println("Acton flags: You can specify only one of the action flags per run.")
@@ -69,6 +74,10 @@ func main() {
 	}
 	defer conn.Close()
 
+	if err := waitForServer(conn, connectTimeout); err != nil {
+		log.WithFields(log.Fields{"host": *host, "port": strconv.Itoa(*port)}).Fatalf("Queue manager not reachable after %s: %v", connectTimeout, err)
+	}
+
 	if *tryOnce {
 		exitCode := 1
 		if frontOfQueue(conn) {
@@ -92,6 +101,26 @@ func main() {
 	if *shutdown {
 		log.Info("Sending shutdown signal...")
 		sendShutdown(conn)
+	}
+}
+
+// waitForServer blocks until the queue manager accepts connections.
+// server-start runs the manager in the background, so it may not be listening yet
+// and the first RPC would fail with "connection refused".
+func waitForServer(conn *grpc.ClientConn, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for {
+		state := conn.GetState()
+		switch state {
+		case connectivity.Ready:
+			return nil
+		case connectivity.Idle:
+			conn.Connect()
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			return ctx.Err()
+		}
 	}
 }
 
