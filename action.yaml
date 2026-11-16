@@ -30,9 +30,9 @@ inputs:
     required: false
     default: 'github-dynamoq'
   version:
-    description: 'The version of dynamo-q to use'
+    description: 'The dynamo-q release to download, for example v2.1.1 or latest. Defaults to the ref the action is used at (morfien101/dynamo-q@v2 downloads the v2 release).'
     required: false
-    default: 'latest'
+    default: ''
   log-level:
     description: 'The log level to use. Options are: trace, debug, info, warn, error, fatal, panic'
     required: false
@@ -44,18 +44,30 @@ runs:
   steps:
     - name: download dynamo-q
       shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
       run: |
+        if [ -z "$VERSION" ]; then
+          # The action is checked out at _actions/<owner>/<repo>/<ref>, so the directory name is the ref
+          # the workflow used (v2, v2.1.1, ...). Branches and SHAs have no release, so they get latest.
+          ref="$(basename "$GITHUB_ACTION_PATH")"
+          if [[ "$ref" =~ ^v[0-9] ]]; then VERSION="$ref"; else VERSION="latest"; fi
+        fi
+        if [ "$VERSION" = "latest" ]; then
+          # Plain download redirect, not the rate-limited REST API.
+          base_url="https://github.com/morfien101/dynamo-q/releases/latest/download"
+        else
+          base_url="https://github.com/morfien101/dynamo-q/releases/download/${VERSION}"
+        fi
+        echo "Using dynamo-q release: $VERSION"
+
         for payload in "dynamoq_manager_linux_amd64" "dynamoq_waiter_linux_amd64"; do
-          output_name="/tmp/${payload%%_linux_amd64}"
+          # RUNNER_TEMP is emptied per job, so a reused runner can't serve an old binary.
+          output_name="${RUNNER_TEMP:-/tmp}/${payload%%_linux_amd64}"
           if [ ! -f "$output_name" ]; then
             echo "Downloading $payload"
-            if [ "${{ inputs.version }}" = "latest" ]; then
-              download_url=$(curl -s https://api.github.com/repos/morfien101/dynamo-q/releases/latest | jq -r --arg name $payload '.assets[] | select(.name == $name) | .browser_download_url')
-            else
-              download_url="https://github.com/morfien101/dynamo-q/releases/download/${{ inputs.version }}/${payload}"
-            fi
-            curl -sSL -o $output_name $download_url
-            chmod 550 $output_name
+            curl -fsSL --retry 5 --retry-all-errors -o "$output_name" "${base_url}/${payload}"
+            chmod 550 "$output_name"
           fi
           
           if [[ "$output_name" =~ "manager" ]]; then

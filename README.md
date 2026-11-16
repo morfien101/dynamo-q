@@ -212,7 +212,10 @@ jobs:
           action: server-stop
 ```
 
-> Use the same `version` for the `server-start`, `client-wait` and `server-stop` steps. Mixing versions mixes binaries.
+> The action downloads the binaries from the release that matches the ref you use it at.
+> `morfien101/dynamo-q@v2` gets the `v2` release, `morfien101/dynamo-q@v2.1.1` gets `v2.1.1`.
+> Branches and commit SHAs get the latest release. Set the `version` input to override this.
+> Use the same ref for the `server-start`, `client-wait` and `server-stop` steps. Mixing versions mixes binaries.
 
 # GCP Firestore Configuration
 
